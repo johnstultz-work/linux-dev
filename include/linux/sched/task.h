@@ -160,6 +160,7 @@ static inline void put_task_struct(struct task_struct *t)
 }
 
 DEFINE_FREE(put_task, struct task_struct *, if (_T) put_task_struct(_T))
+DEFINE_GUARD(get_task, struct task_struct *, get_task_struct(_T), put_task_struct(_T))
 
 static inline void put_task_struct_many(struct task_struct *t, int nr)
 {
