@@ -660,7 +660,10 @@ static int stress(struct ww_class *class, int nlocks, int nthreads, unsigned int
 		nthreads--;
 	}
 
+	int cpu = raw_smp_processor_id();
+	printk("JDB: %s calling flush_workqueue! cpu: %i\n", __func__, cpu);
 	flush_workqueue(wq);
+	printk("JDB: %s flush_workqueue done! cpu: %i\n", __func__, cpu);
 
 	for (n = 0; n < nlocks; n++)
 		ww_mutex_destroy(&locks[n]);
@@ -702,18 +705,22 @@ static int run_tests(struct ww_class *class)
 	if (ret)
 		return ret;
 
+for (i=0; i < 5; i++) { /* try to trip this faster */
+	printk("JDB: %s calling stress STRESS_INORDER\n", __func__);
 	ret = stress(class, 16, 2 * ncpus, STRESS_INORDER);
 	if (ret)
 		return ret;
 
+	printk("JDB: %s calling stress STRESS_REORDER\n", __func__);
 	ret = stress(class, 16, 2 * ncpus, STRESS_REORDER);
 	if (ret)
 		return ret;
 
+	printk("JDB: %s calling stress STRESS_ALL\n", __func__);
 	ret = stress(class, 2046, hweight32(STRESS_ALL) * ncpus, STRESS_ALL);
 	if (ret)
 		return ret;
-
+}
 	return 0;
 }
 
