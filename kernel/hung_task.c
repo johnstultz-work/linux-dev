@@ -19,6 +19,8 @@
 #include <linux/sysctl.h>
 #include <linux/suspend.h>
 #include <linux/utsname.h>
+#include <linux/mmu_context.h>
+#include "sched/sched.h"
 #include <linux/sched/signal.h>
 #include <linux/sched/debug.h>
 #include <linux/sched/sysctl.h>
@@ -246,6 +248,9 @@ static void check_hung_task(struct task_struct *t, unsigned long timeout)
 			sysctl_hung_task_warnings--;
 		pr_err("INFO: task %s:%d blocked for more than %ld seconds.\n",
 		       t->comm, t->pid, (jiffies - t->last_switch_time) / HZ);
+#ifdef CONFIG_SCHED_PROXY_EXEC
+		pr_err("     on_rq: %i rq: %i state: 0x%x  bo_state: %p \n", t->on_rq, task_rq(t) ? cpu_of(task_rq(t)):-1, t->__state, t->blocked_on.lock);
+#endif
 		pr_err("      %s %s %.*s\n",
 			print_tainted(), init_utsname()->release,
 			(int)strcspn(init_utsname()->version, " "),
@@ -322,11 +327,22 @@ static void check_hung_uninterruptible_tasks(unsigned long timeout)
 
 		check_hung_task(t, timeout);
 	}
+	if (hung_task_show_lock) {
+		pr_err("Dumping all tasks:====\n");
+		for_each_process_thread(g, t) {
+#ifdef CONFIG_SCHED_PROXY_EXEC
+			pr_err("task %s:%d , on_rq: %i sched_delay: %i rq: %i state: 0x%x  bo: %p\n", t->comm, t->pid, t->on_rq, t->se.sched_delayed, task_rq(t) ? cpu_of(task_rq(t)):-1, t->__state, t->blocked_on.lock);
+#endif
+			sched_show_task(t);
+		}
+	}
  unlock:
 	rcu_read_unlock();
-	if (hung_task_show_lock)
-		debug_show_all_locks();
+	if (hung_task_show_lock) {
 
+
+		debug_show_all_locks();
+	}
 	if (hung_task_show_all_bt) {
 		hung_task_show_all_bt = false;
 		trigger_all_cpu_backtrace();
