@@ -83,6 +83,15 @@ struct rt_mutex *mutex_mid_list;
 #define test_unlock(x)		rt_mutex_unlock(x)
 #endif
 
+
+static void trace_aprintk(char *str1, char *str2)
+{
+	char buf[268]; //256+12
+
+	sprintf(buf, "I|%i|%s %s", current->pid, str1, str2);
+	trace_puts(buf);
+}
+
 static struct task_struct *create_fifo_thread(int (*threadfn)(void *data),
 					      void *data, char *name, int prio)
 {
@@ -95,12 +104,14 @@ static struct task_struct *create_fifo_thread(int (*threadfn)(void *data),
 	};
 	int ret;
 
+	trace_aprintk("Calling kthread_create - ", name);
 	kth = kthread_create(threadfn, data, name);
 	if (IS_ERR(kth)) {
 		pr_warn("%s: Error, kthread_create %s failed\n", __func__,
 			name);
 		return kth;
 	}
+	trace_aprintk("Calling sched_setattr_nocheck - ", name);
 	ret = sched_setattr_nocheck(kth, &attr);
 	if (ret) {
 		kthread_stop(kth);
@@ -109,6 +120,7 @@ static struct task_struct *create_fifo_thread(int (*threadfn)(void *data),
 		return ERR_PTR(ret);
 	}
 
+	trace_aprintk("Calling wake_up_process - ", name);
 	wake_up_process(kth);
 	return kth;
 }
@@ -125,7 +137,7 @@ static int spawn_players(int (*threadfn)(void *data), char *name, int prio)
 		if (IS_ERR(kth))
 			return -1;
 	}
-
+	trace_aprintk("Started players_per_team. Waiting for checkin...", name);
 	start = jiffies;
 	/* Wait for players_per_team threads to check in */
 	while (atomic_read(&players_ready) < current_players + players_per_team) {
@@ -138,6 +150,7 @@ static int spawn_players(int (*threadfn)(void *data), char *name, int prio)
 			return -1;
 		}
 	}
+	trace_aprintk("Players_per_team checked in! - ", name);
 	return 0;
 }
 
@@ -222,6 +235,7 @@ static int referee_thread(void *arg)
 
 	WRITE_ONCE(game_over, false);
 	pr_info("Started referee, game_time: %ld secs !\n", game_time);
+	trace_aprintk("Started referee!\n", "");
 	/* Create low  priority defensive team */
 	if (spawn_players(defense_low_thread, "defense-low-thread", DEF_LOW_PRIO))
 		goto out;
@@ -240,6 +254,8 @@ static int referee_thread(void *arg)
 	/* Create high priority crazy fan threads */
 	if (spawn_players(crazy_fan_thread, "crazy-fan-thread", FAN_PRIO))
 		goto out;
+
+	trace_aprintk("All players checked in!", "Starting game!\n");
 	pr_info("All players checked in! Starting game.\n");
 	atomic_set(&ball_pos, 0);
 	msleep(game_time * 1000);
@@ -248,6 +264,7 @@ static int referee_thread(void *arg)
 	pr_info("Final ball_pos: %ld\n",  final_pos);
 	WARN_ON(final_pos != 0);
 out:
+	trace_aprintk("Game Over!\n", "");
 	pr_info("Game Over!\n");
 	WRITE_ONCE(game_over, true);
 	complete(&referee_done);
