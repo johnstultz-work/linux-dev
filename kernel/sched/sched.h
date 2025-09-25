@@ -2524,7 +2524,7 @@ static inline bool task_is_blocked(struct task_struct *p)
 	if (!sched_proxy_exec())
 		return false;
 
-	return !!p->blocked_on;
+	return !!p->blocked_on.lock;
 }
 
 #ifdef CONFIG_SCHED_PROXY_EXEC
