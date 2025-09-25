@@ -287,6 +287,23 @@ rwsem_owner_flags(struct rw_semaphore *sem, unsigned long *pflags)
 }
 
 /*
+ * Return the task struct pointer of the owner if it's a writer,
+ * NULL otherwise.
+ */
+struct task_struct *rwsem_writer_owner(struct rw_semaphore *sem)
+{
+	struct task_struct *owner;
+	long count, flags;
+
+	count = atomic_long_read(&sem->count);
+	owner = rwsem_owner_flags(sem, &flags);
+	if (!(count & RWSEM_WRITER_MASK) || (flags & (RWSEM_READER_OWNED |
+	    RWSEM_NONSPINNABLE)))
+		return NULL;
+	return owner;
+}
+
+/*
  * Guide to the rw_semaphore's count field.
  *
  * When the RWSEM_WRITER_LOCKED bit in count is set, the lock is owned
@@ -432,6 +449,11 @@ static void rwsem_mark_wake(struct rw_semaphore *sem,
 			 * Readers, on the other hand, will block as they
 			 * will notice the queued writer.
 			 */
+			raw_spin_lock(&waiter->task->blocked_lock);
+			__clear_task_blocked_on(waiter->task, sem);
+			if (waiter->task == current->blocked_donor)
+				current->blocked_donor = NULL;
+			raw_spin_unlock(&waiter->task->blocked_lock);
 			wake_q_add(wake_q, waiter->task);
 			lockevent_inc(rwsem_wake_writer);
 		}
@@ -1112,6 +1134,7 @@ rwsem_down_write_slowpath(struct rw_semaphore *sem, int state)
 {
 	struct rwsem_waiter waiter;
 	DEFINE_WAKE_Q(wake_q);
+	bool blocked_on_set;
 
 	/* do optimistic spinning and steal lock if possible */
 	if (rwsem_can_spin_on_owner(sem) && rwsem_optimistic_spin(sem)) {
@@ -1151,6 +1174,7 @@ rwsem_down_write_slowpath(struct rw_semaphore *sem, int state)
 	/* wait until we successfully acquire the lock */
 	set_current_state(state);
 	trace_contention_begin(sem, LCB_F_WRITE);
+	blocked_on_set = false;
 
 	if (state == TASK_UNINTERRUPTIBLE)
 		hung_task_set_blocker(sem, BLOCKER_TYPE_RWSEM_WRITER);
@@ -1182,9 +1206,19 @@ rwsem_down_write_slowpath(struct rw_semaphore *sem, int state)
 				goto trylock_again;
 		}
 
+		if (atomic_long_read(&sem->count) & RWSEM_WRITER_MASK) {
+			raw_spin_lock_irq(&current->blocked_lock);
+			__set_task_blocked_on(current, sem, BO_T_RWSEM);
+			blocked_on_set = true;
+			raw_spin_unlock_irq(&current->blocked_lock);
+		}
 		schedule_preempt_disabled();
 		lockevent_inc(rwsem_sleep_writer);
 		set_current_state(state);
+		if (blocked_on_set) {
+			clear_task_blocked_on(current, sem);
+			blocked_on_set = false;
+		}
 trylock_again:
 		raw_spin_lock_irq(&sem->wait_lock);
 	}
