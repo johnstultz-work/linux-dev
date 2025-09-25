@@ -571,6 +571,21 @@ static void rwsem_mark_wake(struct rw_semaphore *sem,
 		struct task_struct *tsk;
 
 		tsk = waiter->task;
+
+		/*
+		 * Note we have to call __clear_task_blocked_on()
+		 * prior to the smp_store_release() in order to avoid
+		 * the waiting task getting a spurious wakeup and
+		 * returning from rwsem_down_read_slowpath(), grabbing
+		 * the lock and blocking on a different lock. This
+		 * would confuse the sanity checks in
+		 * __clear_task_blocked_on() so call it first.
+		 */
+		raw_spin_lock(&tsk->blocked_lock);
+		__clear_task_blocked_on(tsk, sem);
+		if (tsk == current->blocked_donor)
+			current->blocked_donor = NULL;
+		raw_spin_unlock(&tsk->blocked_lock);
 		get_task_struct(tsk);
 
 		/*
@@ -1018,6 +1033,7 @@ rwsem_down_read_slowpath(struct rw_semaphore *sem, long count, unsigned int stat
 	long rcnt = (count >> RWSEM_READER_SHIFT);
 	struct rwsem_waiter waiter;
 	DEFINE_WAKE_Q(wake_q);
+	bool blocked_on_set;
 
 	/*
 	 * To prevent a constant stream of readers from starving a sleeping
@@ -1091,6 +1107,7 @@ queue:
 	if (state == TASK_UNINTERRUPTIBLE)
 		hung_task_set_blocker(sem, BLOCKER_TYPE_RWSEM_READER);
 
+	blocked_on_set = false;
 	/* wait to be given the lock */
 	for (;;) {
 		if (!smp_load_acquire(&waiter.task)) {
@@ -1105,9 +1122,19 @@ queue:
 			/* Ordered by sem->wait_lock against rwsem_mark_wake(). */
 			break;
 		}
+		if (atomic_long_read(&sem->count) & RWSEM_WRITER_MASK) {
+			raw_spin_lock_irq(&current->blocked_lock);
+			__set_task_blocked_on(current, sem, BO_T_RWSEM);
+			raw_spin_unlock_irq(&current->blocked_lock);
+			blocked_on_set = true;
+		}
 		schedule_preempt_disabled();
 		lockevent_inc(rwsem_sleep_reader);
 		set_current_state(state);
+		if (blocked_on_set) {
+			clear_task_blocked_on(current, sem);
+			blocked_on_set = false;
+		}
 	}
 
 	if (state == TASK_UNINTERRUPTIBLE)
