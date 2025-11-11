@@ -358,6 +358,7 @@ struct rwsem_waiter {
 	enum rwsem_waiter_type type;
 	unsigned long timeout;
 	bool handoff_set;
+	bool donor_wakeup;
 };
 
 enum rwsem_wake_type {
@@ -447,17 +448,45 @@ static void rwsem_mark_wake(struct rw_semaphore *sem,
 			    enum rwsem_wake_type wake_type,
 			    struct wake_q_head *wake_q)
 {
-	struct rwsem_waiter *waiter, *next;
+	struct rwsem_waiter *w, *waiter, *next;
 	long oldcount, woken = 0, adjustment = 0;
+	struct task_struct *_donor, *donor;
 	struct list_head wlist;
 
 	lockdep_assert_held(&sem->wait_lock);
+
+	waiter = NULL;
+	donor = NULL;
+	/* Try to wake up our donor */
+	if (sched_proxy_exec()) {
+		raw_spin_lock(&current->blocked_lock);
+		_donor = current->blocked_donor;
+		if (_donor) {
+			raw_spin_lock_nested(&_donor->blocked_lock,
+					     SINGLE_DEPTH_NESTING);
+			if (__get_task_blocked_on(_donor) == (void *)sem) {
+				w = sem->first_waiter;
+				while ((waiter = w) != NULL) {
+					if (w->task == _donor) {
+						donor = _donor;
+						waiter->donor_wakeup = true;
+						break;
+					}
+					w = next_waiter(sem, waiter);
+				}
+				WARN_ON_ONCE(!waiter);
+			}
+			raw_spin_unlock(&_donor->blocked_lock);
+		}
+		raw_spin_unlock(&current->blocked_lock);
+	}
 
 	/*
 	 * Take a peek at the queue head waiter such that we can determine
 	 * the wakeup(s) to perform.
 	 */
-	waiter = sem->first_waiter;
+	if (!waiter)
+		waiter = sem->first_waiter;
 
 	if (waiter->type == RWSEM_WAITING_FOR_WRITE) {
 		if (wake_type == RWSEM_WAKE_ANY) {
@@ -671,6 +700,15 @@ static inline bool rwsem_try_write_lock(struct rw_semaphore *sem,
 	count = atomic_long_read(&sem->count);
 	do {
 		bool has_handoff = !!(count & RWSEM_FLAG_HANDOFF);
+
+		/*
+		 * If we were proxy boosted, and chose to wakeup
+		 * the donor instead of the first waiter, ignore
+		 * the handoff flag in that case, so we don't end
+		 * up with no one waking the first waiter.
+		 */
+		if (waiter->donor_wakeup)
+			has_handoff = false;
 
 		if (has_handoff) {
 			/*
