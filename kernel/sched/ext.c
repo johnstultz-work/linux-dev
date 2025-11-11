@@ -2037,10 +2037,15 @@ static inline void maybe_queue_balance_callback(struct rq *rq)
 	rq->scx.flags &= ~SCX_RQ_BAL_CB_PENDING;
 }
 
-static int balance_one(struct rq *rq, struct task_struct *prev)
+static int balance_one(struct rq *rq)
 {
 	struct scx_sched *sch = scx_root;
 	struct scx_dsp_ctx *dspc = this_cpu_ptr(scx_dsp_ctx);
+	/*
+	 * Note, rq->donor may change during rq lock drops,
+	 * so don't re-use prev across lock drops
+	 */
+	struct task_struct *prev = rq->donor;
 	bool prev_on_scx = prev->sched_class == &ext_sched_class;
 	bool prev_on_rq = prev->scx.flags & SCX_TASK_QUEUED;
 	int nr_loops = SCX_DSP_MAX_LOOPS;
@@ -2110,6 +2115,14 @@ static int balance_one(struct rq *rq, struct task_struct *prev)
 
 		flush_dispatch_buf(sch, rq);
 
+		/*
+		 * Re-sample prev and dependent values since rq lock
+		 * may have been dropped and rq->donor changed
+		 */
+		prev = rq->donor;
+		prev_on_scx = prev->sched_class == &ext_sched_class;
+		prev_on_rq = prev->scx.flags & SCX_TASK_QUEUED;
+
 		if (prev_on_rq && prev->scx.slice) {
 			rq->scx.flags |= SCX_RQ_BAL_KEEP;
 			goto has_tasks;
@@ -2153,14 +2166,13 @@ has_tasks:
 	return true;
 }
 
-static int balance_scx(struct rq *rq, struct task_struct *prev,
-		       struct rq_flags *rf)
+static int balance_scx(struct rq *rq, struct rq_flags *rf)
 {
 	int ret;
 
 	rq_unpin_lock(rq, rf);
 
-	ret = balance_one(rq, prev);
+	ret = balance_one(rq);
 
 #ifdef CONFIG_SCHED_SMT
 	/*
@@ -2174,11 +2186,10 @@ static int balance_scx(struct rq *rq, struct task_struct *prev,
 
 		for_each_cpu_andnot(scpu, smt_mask, cpumask_of(cpu_of(rq))) {
 			struct rq *srq = cpu_rq(scpu);
-			struct task_struct *sprev = srq->curr;
 
 			WARN_ON_ONCE(__rq_lockp(rq) != __rq_lockp(srq));
 			update_rq_clock(srq);
-			balance_one(srq, sprev);
+			balance_one(srq);
 		}
 	}
 #endif
