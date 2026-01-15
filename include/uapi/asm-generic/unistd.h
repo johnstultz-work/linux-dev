@@ -858,6 +858,9 @@ __SYSCALL(__NR_file_getattr, sys_file_getattr)
 #define __NR_file_setattr 469
 __SYSCALL(__NR_file_setattr, sys_file_setattr)
 
+#define __NR_directed_yield 470
+__SYSCALL(__NR_sched_directed_yield, sys_sched_directed_yield)
+
 #undef __NR_syscalls
 #define __NR_syscalls 470
 
