@@ -813,11 +813,14 @@ struct kmap_ctrl {
 #endif
 };
 
+int do_proxy_yield(struct task_struct *p);
+
 enum blocked_on_type {
 	BO_T_NONE,
 	BO_T_MUTEX,
 	BO_T_RWSEM,
 	BO_T_PING_FUTEX,
+	BO_T_DYIELD,
 };
 
 struct blocked_on_lock {
