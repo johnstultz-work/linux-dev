@@ -6750,7 +6750,7 @@ static void print_held_locks_bug(void)
 	lockdep_print_held_locks(current);
 	pr_warn("\nstack backtrace:\n");
 	dump_stack();
-
+	BUG();
 	nbcon_cpu_emergency_exit();
 }
 
