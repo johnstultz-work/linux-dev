@@ -478,6 +478,9 @@ static bool wq_debug_force_rr_cpu = false;
 #endif
 module_param_named(debug_force_rr_cpu, wq_debug_force_rr_cpu, bool, 0644);
 
+static int wq_debug_sleep_delay_us;
+module_param_named(debug_sleep_delay_us, wq_debug_sleep_delay_us, int, 0644);
+
 /* to raise softirq for the BH worker pools on other CPUs */
 static DEFINE_PER_CPU_SHARED_ALIGNED(struct irq_work [NR_STD_WORKER_POOLS], bh_pool_irq_works);
 
@@ -1436,6 +1439,9 @@ void wq_worker_sleeping(struct task_struct *task)
 		return;
 
 	pool = worker->pool;
+
+	if (wq_debug_sleep_delay_us > 0)
+		udelay(wq_debug_sleep_delay_us);
 
 	/* Return if preempted before wq_worker_running() was reached */
 	if (READ_ONCE(worker->sleeping))
