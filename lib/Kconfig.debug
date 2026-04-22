@@ -1320,6 +1320,25 @@ config TEST_LOCKUP
 
 	  If unsure, say N.
 
+config TEST_WQ_RACE
+	bool "Reproducer for wq_worker_sleeping()/IPI pool->nr_running race"
+	depends on SMP
+	help
+	  Builds the test_wq_race reproducer for the race where a
+	  reschedule IPI preempts a worker between schedule() invoking
+	  wq_worker_sleeping() and the pool->nr_running decrement,
+	  leaving nr_running stuck > 0. The harness uses two bound
+	  workqueues on the same target CPU. The mutex owner queues
+	  a dependent work item to the second workqueue and waits for
+	  a completion while still holding the mutex. If the pool wedges,
+	  the queued dependent work never runs even though idle workers exist.
+
+	  Triggered explicitly via the test_wq_race.enable=1 kernel
+	  command line parameter; does nothing on boot otherwise.
+
+	  Deliberately deadlocks a CPU's worker pool.  Enable only on
+	  machines where a hard reboot is acceptable.  If unsure, say N.
+
 endmenu # "Debug lockups and hangs"
 
 menu "Scheduler Debugging"
