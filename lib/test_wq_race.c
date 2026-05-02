@@ -288,7 +288,7 @@ static int monitor_fn(void *unused)
 					atomic_read(&lock_holders),
 					atomic_read(&gp_queued),
 					atomic_read(&gp_completed));
-
+				BUG();
 				if (prev_stall_ms < stall_threshold_ms) {
 					stop_wake_path();
 					pr_info("wq-race: wake path stopped, dumping workqueue state\n");
