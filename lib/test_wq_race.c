@@ -298,12 +298,13 @@ static int monitor_fn(void *unused)
 			}
 		} else {
 			stall_ms = 0;
-			pr_info("wq-race: progress total_done=%lu (+%lu in %lums) in_flight=%d lock_holders=%d gp_queued=%d gp_completed=%d\n",
-				total, total - last_total, dt_ms,
-				atomic_read(&in_flight),
-				atomic_read(&lock_holders),
-				atomic_read(&gp_queued),
-				atomic_read(&gp_completed));
+			if (dump_interval_ms > 0)
+				pr_info("wq-race: progress total_done=%lu (+%lu in %lums) in_flight=%d lock_holders=%d gp_queued=%d gp_completed=%d\n",
+					total, total - last_total, dt_ms,
+					atomic_read(&in_flight),
+					atomic_read(&lock_holders),
+					atomic_read(&gp_queued),
+					atomic_read(&gp_completed));
 		}
 
 		last_total = total;
