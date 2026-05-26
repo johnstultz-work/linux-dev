@@ -3732,9 +3732,6 @@ static inline void proxy_reset_donor(struct rq *rq)
  */
 static inline bool proxy_needs_return(struct rq *rq, struct task_struct *p)
 {
-	if (!p->is_blocked)
-		return false;
-
 	/*
 	 * Typically per __set_task_cpu(), task_cpu(p) == p->wake_cpu.
 	 *
@@ -3857,10 +3854,12 @@ static int ttwu_runnable(struct task_struct *p, int wake_flags)
 		goto out;
 
 	update_rq_clock(rq);
-	if (p->se.sched_delayed)
-		enqueue_task(rq, p, ENQUEUE_NOCLOCK | ENQUEUE_DELAYED);
-	if (proxy_needs_return(rq, p))
-		goto out;
+	if (p->is_blocked) {
+		if (p->se.sched_delayed)
+			enqueue_task(rq, p, ENQUEUE_NOCLOCK | ENQUEUE_DELAYED);
+		if (proxy_needs_return(rq, p))
+			goto out;
+	}
 	if (!task_on_cpu(rq, p)) {
 		/*
 		 * When on_rq && !on_cpu the task is preempted, see if
