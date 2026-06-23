@@ -817,6 +817,7 @@ enum blocked_on_type {
 	BO_T_NONE,
 	BO_T_MUTEX,
 	BO_T_RWSEM,
+	BO_T_PING_FUTEX,
 };
 
 struct blocked_on_lock {
@@ -2204,6 +2205,13 @@ static inline void __set_task_blocked_on(struct task_struct *p, void *m,
 	p->blocked_on.type = type;
 }
 
+static inline void set_task_blocked_on(struct task_struct *p, void *m,
+				       enum blocked_on_type type)
+{
+	guard(raw_spinlock_irqsave)(&p->blocked_lock);
+	__set_task_blocked_on(p, m, type);
+}
+
 static inline void __clear_task_blocked_on(struct task_struct *p, void *m)
 {
 	/* Currently we serialize blocked_on under the task::blocked_lock */
@@ -2225,6 +2233,10 @@ static inline void clear_task_blocked_on(struct task_struct *p, void *m)
 }
 
 #else
+static inline void set_task_blocked_on(struct task_struct *p, void *m,
+				       enum blocked_on_type type)
+{
+}
 static inline void __clear_task_blocked_on(struct task_struct *p, void *m)
 {
 }
