@@ -51,18 +51,18 @@ static void pi_state_update_owner(struct futex_pi_state *pi_state,
 	lockdep_assert_held(&pi_state->pi_mutex.wait_lock);
 
 	if (old_owner) {
-		raw_spin_lock(&old_owner->pi_lock);
+		raw_spin_lock(&old_owner->pi_futex_lock);
 		WARN_ON(list_empty(&pi_state->list));
 		list_del_init(&pi_state->list);
-		raw_spin_unlock(&old_owner->pi_lock);
+		raw_spin_unlock(&old_owner->pi_futex_lock);
 	}
 
 	if (new_owner) {
-		raw_spin_lock(&new_owner->pi_lock);
+		raw_spin_lock(&new_owner->pi_futex_lock);
 		WARN_ON(!list_empty(&pi_state->list));
 		list_add(&pi_state->list, &new_owner->pi_state_list);
 		pi_state->owner = new_owner;
-		raw_spin_unlock(&new_owner->pi_lock);
+		raw_spin_unlock(&new_owner->pi_futex_lock);
 	}
 }
 
@@ -177,7 +177,7 @@ void put_pi_state(struct futex_pi_state *pi_state)
  *
  *	(and pi_mutex 'obviously')
  *
- * p->pi_lock:
+ * p->pi_futex_lock:
  *
  *	p->pi_state_list -> pi_state->list, relation
  *	pi_mutex->owner -> pi_state->owner, relation
@@ -191,7 +191,7 @@ void put_pi_state(struct futex_pi_state *pi_state)
  *
  *   hb->lock
  *     pi_mutex->wait_lock
- *       p->pi_lock
+ *       p->pi_futex_lock
  *
  */
 
@@ -436,9 +436,9 @@ static int attach_to_pi_owner(u32 __user *uaddr, u32 uval, union futex_key *key,
 	/*
 	 * We need to look at the task state to figure out, whether the
 	 * task is exiting. To protect against the change of the task state
-	 * in futex_exit_release(), we do this protected by p->pi_lock:
+	 * in futex_exit_release(), we do this protected by p->pi_futex_lock:
 	 */
-	raw_spin_lock_irq(&p->pi_lock);
+	raw_spin_lock_irq(&p->pi_futex_lock);
 	if (unlikely(p->futex_state != FUTEX_STATE_OK)) {
 		/*
 		 * The task is on the way out. When the futex state is
@@ -447,7 +447,7 @@ static int attach_to_pi_owner(u32 __user *uaddr, u32 uval, union futex_key *key,
 		 */
 		int ret = handle_exit_race(uaddr, uval, p);
 
-		raw_spin_unlock_irq(&p->pi_lock);
+		raw_spin_unlock_irq(&p->pi_futex_lock);
 		/*
 		 * If the owner task is between FUTEX_STATE_EXITING and
 		 * FUTEX_STATE_DEAD then store the task pointer and keep
@@ -465,7 +465,7 @@ static int attach_to_pi_owner(u32 __user *uaddr, u32 uval, union futex_key *key,
 	}
 
 	__attach_to_pi_owner(p, key, ps);
-	raw_spin_unlock_irq(&p->pi_lock);
+	raw_spin_unlock_irq(&p->pi_futex_lock);
 
 	put_task_struct(p);
 
@@ -584,9 +584,9 @@ int futex_lock_pi_atomic(u32 __user *uaddr, struct futex_hash_bucket *hb,
 		 * because @task is known and valid.
 		 */
 		if (set_waiters) {
-			raw_spin_lock_irq(&task->pi_lock);
+			raw_spin_lock_irq(&task->pi_futex_lock);
 			__attach_to_pi_owner(task, key, ps);
-			raw_spin_unlock_irq(&task->pi_lock);
+			raw_spin_unlock_irq(&task->pi_futex_lock);
 		}
 		return 1;
 	}
