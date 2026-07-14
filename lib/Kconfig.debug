@@ -3242,6 +3242,16 @@ config TEST_CLOCKSOURCE_WATCHDOG
 
 	  If unsure, say N.
 
+config TEST_RWSEM_RACE
+	tristate "Test rwsem mark_wake blocked_on race condition"
+	default n
+	help
+	  This option enables a test for the rwsem_mark_wake blocked_on race.
+	  Creates /sys/kernel/test_rwsem_race/run to trigger the test.
+
+	  If unsure, say N.
+
+
 config TEST_OBJPOOL
 	tristate "Test module for correctness and stress of objpool"
 	default n
