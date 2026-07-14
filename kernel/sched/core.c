@@ -6984,6 +6984,8 @@ static void proxy_migrate_task(struct rq *rq, struct rq_flags *rf,
 	proxy_reacquire_rq_lock(rq, rf);
 }
 
+#define MAX_PROXY_CHAIN_DEPTH 1024
+
 /*
  * Find runnable lock owner to proxy for mutex blocked donor
  *
@@ -7019,6 +7021,7 @@ find_proxy_task(struct rq *rq, struct task_struct *donor, struct rq_flags *rf)
 	int this_cpu = cpu_of(rq);
 	struct task_struct *p;
 	int owner_cpu;
+	int chain_depth = 0;
 
 	/* Follow blocked_on chain. */
 	for (p = donor; p->is_blocked; p = owner) {
@@ -7139,6 +7142,13 @@ find_proxy_task(struct rq *rq, struct task_struct *donor, struct rq_flags *rf)
 			 */
 			goto resched_idle;
 		}
+
+		/* Limit the depth we'll proxy to avoid cyclic deadlocks */
+		if (++chain_depth > MAX_PROXY_CHAIN_DEPTH) {
+			__clear_task_blocked_on(p, NULL);
+			goto deactivate;
+		}
+
 		/*
 		 * OK, now we're absolutely sure @owner is on this
 		 * rq, therefore holding @rq->lock is sufficient to
