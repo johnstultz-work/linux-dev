@@ -38,3 +38,7 @@ obj-y += fair.o
 obj-y += build_policy.o
 obj-y += build_utility.o
 obj-$(CONFIG_SCHED_RT_INVARIANT_TEST) += test_ksched_football.o
+
+# proxy-exec per-cpu nr_iowait imbalance reproducer, triggered on demand via
+# /sys/kernel/proxy_iowait_repro/run . Built in unconditionally.
+obj-y += proxy_iowait_repro.o
