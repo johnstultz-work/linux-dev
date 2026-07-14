@@ -410,6 +410,7 @@ rwsem_del_waiter(struct rw_semaphore *sem, struct rwsem_waiter *waiter)
 	atomic_long_andnot(RWSEM_FLAG_HANDOFF | RWSEM_FLAG_WAITERS, &sem->count);
 	return false;
 }
+#include <linux/delay.h>
 
 /*
  * handle the lock release when processes blocked on it that can now run
@@ -623,6 +624,9 @@ static void rwsem_mark_wake(struct rw_semaphore *sem,
 		 * to the task to wakeup.
 		 */
 		smp_store_release(&waiter->task, NULL);
+#ifdef CONFIG_TEST_RWSEM_RACE
+		mdelay(20);
+#endif
 		/*
 		 * Ensure issuing the wakeup (either by us or someone else)
 		 * after setting the reader waiter to nil.
