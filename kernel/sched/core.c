@@ -3808,6 +3808,9 @@ static inline void ttwu_do_wakeup(struct task_struct *p)
 
 static inline struct task_struct *proxy_resched_idle(struct rq *rq);
 #ifdef CONFIG_SCHED_PROXY_EXEC
+static struct task_struct *find_proxy_task(struct rq *rq, struct task_struct *donor,
+					   struct rq_flags *rf);
+static void proxy_deactivate(struct rq *rq, struct task_struct *donor);
 static void zap_balance_callbacks(struct rq *rq);
 
 static inline void proxy_reset_donor(struct rq *rq)
@@ -6563,8 +6566,18 @@ extern void task_vruntime_update(struct rq *rq, struct task_struct *p, bool in_f
 static void queue_core_balance(struct rq *rq);
 
 static struct task_struct *
+find_proxy_task(struct rq *rq, struct task_struct *donor, struct rq_flags *rf);
+static inline struct task_struct *proxy_resched_idle(struct rq *rq);
+
+static __always_inline bool sched_core_proxy_pick(struct rq *rq)
+{
+	return sched_proxy_exec() && unlikely(rq->core_pick_blocked_donor);
+}
+
+static struct task_struct *
 pick_next_task(struct rq *rq, struct rq_flags *rf)
 {
+	struct task_struct *owner = NULL, *donor = rq->donor;
 	struct task_struct *next, *p, *max;
 	const struct cpumask *smt_mask;
 	bool fi_before = false;
@@ -6646,6 +6659,24 @@ pick_next_task(struct rq *rq, struct rq_flags *rf)
 	 */
 	rq->core->core_task_seq++;
 
+	/* Last core_pick resolved to a blocked_donor! */
+	if (sched_core_proxy_pick(rq)) {
+		WARN_ON_ONCE(!donor->is_blocked);
+
+		donor->blocked_donor = NULL;
+		owner = find_proxy_task(rq, donor, rf);
+		if (owner && owner != rq->idle)
+			goto restart_multi;
+		/*
+		 * Something changed in the proxy chain!
+		 * Retry pick like normal. Increment core_task_seq
+		 * since the core-wide lock might have been dropped
+		 * during proxy-migration in find_proxy_task().
+		 */
+		rq->core_pick_blocked_donor = false;
+		rq->core->core_task_seq++;
+	}
+
 	/*
 	 * Optimize for common case where this CPU has no cookies
 	 * and there are no cookied tasks running on siblings.
@@ -6704,6 +6735,28 @@ restart_multi:
 	}
 
 	rq_max->core_pick_leader = true;
+
+	if (sched_core_proxy_pick(rq)) {
+		WARN_ON_ONCE(!owner);
+
+		/*
+		 * Core-wide pick resolved to the same state as last time.
+		 * Swap the donor with the lock owner and continue the
+		 * rest of the pick sequence.
+		 */
+		if (rq->core_pick_leader && rq->core_pick == donor) {
+			rq_max->core_pick = owner;
+			max = owner;
+		} else {
+			/*
+			 * Pick resolved to a different leader / donor task.
+			 * Clear the "core_pick_blocked_donor" indicator and
+			 * proceed like normal.
+			 */
+			rq->core_pick_blocked_donor = false;
+		}
+	}
+
 	cookie = rq->core->core_cookie = max->core_cookie;
 
 	/*
@@ -6801,9 +6854,16 @@ restart_multi:
 	}
 
 out_set_next:
-	put_prev_set_next_task(rq, rq->donor, next);
-	if (rq->core->core_forceidle_count && next == rq->idle)
-		queue_core_balance(rq);
+	/*
+	 * If this is a redo for setting the owner's core-cookie,
+	 * put_prev_set_next_task() was already done during the
+	 * last pick and there is nothing to do now.
+	 */
+	if (!sched_core_proxy_pick(rq)) {
+		put_prev_set_next_task(rq, rq->donor, next);
+		if (rq->core->core_forceidle_count && next == rq->idle)
+			queue_core_balance(rq);
+	}
 
 	return next;
 }
@@ -7019,8 +7079,6 @@ static inline void sched_core_cpu_dying(unsigned int cpu)
 		rq->core = rq;
 }
 
-static void proxy_deactivate(struct rq *rq, struct task_struct *donor);
-
 static struct task_struct *
 sched_core_swap_pick(struct rq *rq, struct task_struct *next)
 {
@@ -7033,9 +7091,19 @@ sched_core_swap_pick(struct rq *rq, struct task_struct *next)
 		return rq->idle;
 	}
 
-	clear_task_blocked_on(rq->donor, NULL);
-	proxy_deactivate(rq, rq->donor);
+	rq->core_pick_blocked_donor = true;
 	return RETRY_TASK;
+}
+
+static bool sched_core_retain_donor(struct rq *rq)
+{
+	bool retain = rq->core_pick_blocked_donor;
+
+	if (!sched_core_enabled(rq))
+		return false;
+
+	rq->core_pick_blocked_donor = false;
+	return retain;
 }
 
 #else /* !CONFIG_SCHED_CORE: */
@@ -7060,6 +7128,11 @@ sched_core_swap_pick(struct rq *rq, struct task_struct *next)
 	 */
 	BUG();
 	return next;
+}
+
+static bool sched_core_retain_donor(struct rq *rq)
+{
+	return false;
 }
 
 #endif /* !CONFIG_SCHED_CORE */
@@ -7515,10 +7588,7 @@ migrate_task:
 	return NULL;
 }
 #else /* SCHED_PROXY_EXEC */
-static inline struct task_struct *proxy_resched_idle(struct rq *rq) {return rq->idle;}
-#ifdef CONFIG_SCHED_CORE
-static void proxy_deactivate(struct rq *rq, struct task_struct *donor) {}
-#endif /* CONFIG_SCHED_CORE */
+static inline struct task_struct *proxy_resched_idle(struct rq *rq) { return rq->idle; }
 static struct task_struct *
 find_proxy_task(struct rq *rq, struct task_struct *donor, struct rq_flags *rf)
 {
@@ -7657,8 +7727,11 @@ pick_again:
 	if (sched_proxy_exec()) {
 		struct task_struct *prev_donor = rq->donor;
 
-		rq_set_donor(rq, next);
-		next->blocked_donor = NULL;
+		if (!sched_core_retain_donor(rq)) {
+			rq_set_donor(rq, next);
+			next->blocked_donor = NULL;
+		}
+
 		if (unlikely(next->is_blocked)) {
 			next = find_proxy_task(rq, next, &rf);
 			if (!next) {
