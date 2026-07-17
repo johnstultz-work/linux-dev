@@ -1376,6 +1376,7 @@ struct rq {
 
 	/* private state for sched_proxy_exec()  */
 	bool			core_pick_leader;
+	bool			core_pick_blocked_donor;
 
 	/* shared state -- careful with sched_core_cpu_deactivate() */
 	unsigned int		core_task_seq;
