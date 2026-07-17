@@ -6624,9 +6624,9 @@ pick_next_task(struct rq *rq, struct rq_flags *rf)
 	const struct cpumask *smt_mask;
 	bool fi_before = false;
 	bool core_clock_updated = (rq == rq->core);
+	struct rq *rq_i, *rq_max;
 	unsigned long cookie;
 	int i, cpu, occ = 0;
-	struct rq *rq_i;
 	bool need_sync = false;
 
 	if (!sched_core_enabled(rq))
@@ -6643,6 +6643,7 @@ pick_next_task(struct rq *rq, struct rq_flags *rf)
 		 */
 		rq->core_pick = NULL;
 		rq->core_dl_server = NULL;
+		rq->core_pick_leader = true;
 		return __pick_next_task(rq, rf);
 	}
 
@@ -6721,6 +6722,7 @@ restart:
 		if (!next->core_cookie) {
 			rq->core_pick = NULL;
 			rq->core_dl_server = NULL;
+			rq->core_pick_leader = true;
 			/*
 			 * For robustness, update the min_vruntime_fi for
 			 * unconstrained picks as well.
@@ -6738,6 +6740,7 @@ restart:
 	 * Tie-break prio towards the current CPU
 	 */
 	max = NULL;
+	rq_max = NULL;
 	for_each_cpu_wrap(i, smt_mask, cpu) {
 		rq_i = cpu_rq(i);
 
@@ -6760,11 +6763,15 @@ restart:
 
 		rq_i->core_pick = p;
 		rq_i->core_dl_server = rq_i->dl_server;
+		rq_i->core_pick_leader = false;
 
-		if (!max || prio_less(max, p, fi_before))
+		if (!max || prio_less(max, p, fi_before)) {
 			max = p;
+			rq_max = rq_i;
+		}
 	}
 
+	rq_max->core_pick_leader = true;
 	cookie = rq->core->core_cookie = max->core_cookie;
 
 	/*
