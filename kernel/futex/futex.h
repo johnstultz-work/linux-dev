@@ -158,6 +158,8 @@ struct futex_pi_state {
 
 	struct task_struct *owner;
 	refcount_t refcount;
+	bool handoff;
+	bool pickup;
 
 	union futex_key key;
 } __randomize_layout;
