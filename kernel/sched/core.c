@@ -6773,6 +6773,19 @@ static inline void proxy_reacquire_rq_lock(struct rq *rq, struct rq_flags *rf)
 	update_rq_clock(rq);
 }
 
+static void
+proxy_activate(struct rq *rq, struct rq_flags *rf, struct task_struct *p)
+	__must_hold(__rq_lockp(rq))
+{
+	lockdep_assert_rq_held(rq);
+	proxy_resched_idle(rq);
+	proxy_release_rq_lock(rq, rf);
+
+	wake_up_process(p);
+
+	proxy_reacquire_rq_lock(rq, rf);
+}
+
 /*
  * If the blocked-on relationship crosses CPUs, migrate @p to the
  * owner's CPU.
@@ -6898,14 +6911,15 @@ find_proxy_task(struct rq *rq, struct task_struct *donor, struct rq_flags *rf)
 			/*
 			 * If there is no owner, either clear blocked_on
 			 * and return p (if it is current and safe to
-			 * just run on this rq), or return-migrate the task.
+			 * just run on this rq), or wake the task to try
+			 * and grab the lock it is blocked on.
 			 */
 			__clear_task_blocked_on(p, NULL);
-			if (task_current(rq, p)) {
+			if (task_current(rq, p) || p->wake_cpu == task_cpu(p)) {
 				p->is_blocked = 0;
 				return p;
 			}
-			goto deactivate;
+			goto activate;
 		}
 
 		if (!READ_ONCE(owner->on_rq) || owner->se.sched_delayed) {
@@ -6993,6 +7007,9 @@ find_proxy_task(struct rq *rq, struct task_struct *donor, struct rq_flags *rf)
 	}
 	return owner;
 
+activate:
+	proxy_activate(rq, rf, p);
+	return NULL;
 deactivate:
 	proxy_deactivate(rq, p);
 	return NULL;
