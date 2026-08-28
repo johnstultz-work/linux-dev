@@ -3,7 +3,7 @@
 #include <linux/plist.h>
 #include <linux/slab.h>
 #include <linux/sched/task.h>
-
+#include <trace/events/lock.h>
 #include "futex.h"
 
 static int futex_trylock_ping_state(u32 __user *uaddr,
@@ -336,7 +336,6 @@ static int ping_spin_or_trylock(u32 __user *uaddr,
 {
 	struct task_struct *owner = ping_mutex_owner(&ping_state->ping_mutex);
 	struct task_struct *new;
-	int ret;
 
 	if (owner && !owner_on_cpu(owner))
 		return 0;
@@ -348,20 +347,25 @@ static int ping_spin_or_trylock(u32 __user *uaddr,
 
 	while (1) {
 		new = ping_mutex_owner(&ping_state->ping_mutex);
-		ret = 0;
 		if (!owner || !new || new == current)
 			return futex_trylock_ping_state(uaddr, ping_state,
 						        handoff);
 		if (new != owner) {
-			ret = 0;
+			trace_ping_lock_spin_stopped(current, "owner changed");
 			break;
 		}
-		if (!owner_on_cpu(owner) || need_resched())
+		if (!owner_on_cpu(owner)) {
+			trace_ping_lock_spin_stopped(current, "!on_cpu");
 			break;
+		}
+		if (need_resched()) {
+			trace_ping_lock_spin_stopped(current, "resched");
+			break;
+		}
 		cpu_relax();
 	}
 
-	return ret;
+	return 0;
 }
 
 /*
@@ -378,6 +382,8 @@ int futex_lock_ping(u32 __user *uaddr, unsigned int flags, ktime_t *time,
 	struct futex_q q = futex_q_init;
 	bool queued, should_handoff;
 	int ret;
+
+	trace_ping_lock_start(current);
 
 	if (refill_pi_state_cache())
 		return -ENOMEM;
@@ -474,10 +480,12 @@ retry_private:
 				futex_q_lockptr_lock(&q);
 				goto out_unqueue;
 			}
-			preempt_enable();
 
 			set_task_blocked_on(current, &q.ping_state->ping_mutex,
 					    BO_T_PING_FUTEX);
+
+			trace_ping_lock_waiting(current);
+			preempt_enable();
 
 			futex_do_wait(&q, to);
 
@@ -542,6 +550,7 @@ uaddr_faulted:
 	}
 
 out:
+	trace_ping_lock_aquired(current, ret);
 	if (to) {
 		hrtimer_cancel(&to->timer);
 		destroy_hrtimer_on_stack(&to->timer);
@@ -595,6 +604,7 @@ int futex_unlock_ping(u32 __user *uaddr, unsigned int flags)
 	DEFINE_WAKE_Q(wake_q);
 	int ret;
 
+	trace_ping_unlocked(current);
 retry:
 	if (get_user(uval, uaddr))
 		return -EFAULT;
@@ -660,6 +670,7 @@ retry:
 		clear_task_blocked_on(next, &ping_state->ping_mutex);
 	}
 	clear_task_blocked_on(next, &ping_state->ping_mutex);
+	trace_ping_unlock_waking(current, next);
 	wake_q_add_safe(&wake_q, next);
 	spin_unlock(&hb->lock);
 
@@ -670,6 +681,7 @@ retry:
 	 */
 	new = FUTEX_WAITERS;
 	if (ping_state->handoff) { /* Don't handoff to donor */
+		trace_ping_unlock_handoff(current, next);
 		new |= task_pid_vnr(next);
 		ping_state->handoff = 0;
 		ping_state->pickup = 1;
