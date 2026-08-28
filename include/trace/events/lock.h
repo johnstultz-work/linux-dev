@@ -138,7 +138,208 @@ TRACE_EVENT(contention_end,
 	TP_printk("%p (ret=%d)", __entry->lock_addr, __entry->ret)
 );
 
+
+
+TRACE_EVENT(ping_lock_start,
+
+	TP_PROTO(struct task_struct *curr),
+
+	TP_ARGS(curr),
+
+	TP_STRUCT__entry(
+		__array(char,   curr_comm,     TASK_COMM_LEN   )
+		__field(pid_t,  curr_pid                       )
+		__field(int,    curr_prio                      )
+		__field(int,    curr_cpu                       )
+	),
+
+	TP_fast_assign(
+		strscpy(__entry->curr_comm, curr->comm, TASK_COMM_LEN);
+			__entry->curr_pid      = curr->pid;
+			__entry->curr_prio     = curr->prio; /* XXX SCHED_DEADLINE */
+			__entry->curr_cpu      = task_cpu(curr);
+	),
+
+	TP_printk("task=%s pid=%d prio=%d cpu=%d trying to grab ping lock",
+		__entry->curr_comm, __entry->curr_pid,
+		__entry->curr_prio, __entry->curr_cpu)
+);
+
+TRACE_EVENT(ping_lock_spin_stopped,
+
+	TP_PROTO(struct task_struct *curr, char *reason),
+
+	TP_ARGS(curr, reason),
+
+	TP_STRUCT__entry(
+		__array(char,   curr_comm,     TASK_COMM_LEN   )
+		__field(pid_t,  curr_pid                       )
+		__field(int,    curr_prio                      )
+		__field(int,    curr_cpu                       )
+		__array(char,   reason,     TASK_COMM_LEN   )
+	),
+
+	TP_fast_assign(
+		strscpy(__entry->curr_comm, curr->comm, TASK_COMM_LEN);
+			__entry->curr_pid      = curr->pid;
+			__entry->curr_prio     = curr->prio; /* XXX SCHED_DEADLINE */
+			__entry->curr_cpu      = task_cpu(curr);
+		strscpy(__entry->reason, reason, TASK_COMM_LEN);
+	),
+
+	TP_printk("task=%s pid=%d prio=%d cpu=%d optimistic spin failed: %s",
+		__entry->curr_comm, __entry->curr_pid,
+		__entry->curr_prio, __entry->curr_cpu, __entry->reason)
+);
+
+TRACE_EVENT(ping_lock_waiting,
+
+	TP_PROTO(struct task_struct *curr),
+
+	TP_ARGS(curr),
+
+	TP_STRUCT__entry(
+		__array(char,   curr_comm,     TASK_COMM_LEN   )
+		__field(pid_t,  curr_pid                       )
+		__field(int,    curr_prio                      )
+		__field(int,    curr_cpu                       )
+	),
+
+	TP_fast_assign(
+		strscpy(__entry->curr_comm, curr->comm, TASK_COMM_LEN);
+			__entry->curr_pid      = curr->pid;
+			__entry->curr_prio     = curr->prio; /* XXX SCHED_DEADLINE */
+			__entry->curr_cpu      = task_cpu(curr);
+	),
+
+	TP_printk("task=%s pid=%d prio=%d cpu=%d waiting on lock",
+		__entry->curr_comm, __entry->curr_pid,
+		__entry->curr_prio, __entry->curr_cpu)
+);
+
+TRACE_EVENT(ping_lock_aquired,
+
+	TP_PROTO(struct task_struct *curr, int ret),
+
+	TP_ARGS(curr, ret),
+
+	TP_STRUCT__entry(
+		__array(char,   curr_comm,     TASK_COMM_LEN   )
+		__field(pid_t,  curr_pid                       )
+		__field(int,    curr_prio                      )
+		__field(int,    curr_cpu                       )
+		__field(int,    ret)
+	),
+
+	TP_fast_assign(
+		strscpy(__entry->curr_comm, curr->comm, TASK_COMM_LEN);
+			__entry->curr_pid      = curr->pid;
+			__entry->curr_prio     = curr->prio; /* XXX SCHED_DEADLINE */
+			__entry->curr_cpu      = task_cpu(curr);
+			__entry->ret           = ret;
+	),
+
+	TP_printk("task=%s pid=%d prio=%d cpu=%d aquired ping lock (ret=%i)",
+		__entry->curr_comm, __entry->curr_pid,
+		__entry->curr_prio, __entry->curr_cpu, __entry->ret)
+);
+
+TRACE_EVENT(ping_unlocked,
+
+	TP_PROTO(struct task_struct *curr),
+
+	TP_ARGS(curr),
+
+	TP_STRUCT__entry(
+		__array(char,   curr_comm,     TASK_COMM_LEN   )
+		__field(pid_t,  curr_pid                       )
+		__field(int,    curr_prio                      )
+		__field(int,    curr_cpu                       )
+	),
+
+	TP_fast_assign(
+		strscpy(__entry->curr_comm, curr->comm, TASK_COMM_LEN);
+			__entry->curr_pid      = curr->pid;
+			__entry->curr_prio     = curr->prio; /* XXX SCHED_DEADLINE */
+			__entry->curr_cpu      = task_cpu(curr);
+	),
+
+	TP_printk("task=%s pid=%d prio=%d cpu=%d unlocking: ping lock",
+		__entry->curr_comm, __entry->curr_pid,
+		__entry->curr_prio, __entry->curr_cpu)
+);
+
+TRACE_EVENT(ping_unlock_waking,
+
+	TP_PROTO(struct task_struct *curr, struct task_struct *next),
+
+	TP_ARGS(curr, next),
+
+	TP_STRUCT__entry(
+		__array(char,   curr_comm,     TASK_COMM_LEN   )
+		__field(pid_t,  curr_pid                       )
+		__field(int,    curr_prio                      )
+		__field(int,    curr_cpu                       )
+		__array(char,   next_comm,     TASK_COMM_LEN   )
+		__field(pid_t,  next_pid                       )
+		__field(int,    next_prio                      )
+		__field(int,    next_cpu                       )
+	),
+
+	TP_fast_assign(
+		strscpy(__entry->curr_comm, curr->comm, TASK_COMM_LEN);
+			__entry->curr_pid      = curr->pid;
+			__entry->curr_prio     = curr->prio; /* XXX SCHED_DEADLINE */
+			__entry->curr_cpu      = task_cpu(curr);
+		strscpy(__entry->next_comm, next->comm, TASK_COMM_LEN);
+			__entry->next_pid      = next->pid;
+			__entry->next_prio     = next->prio; /* XXX SCHED_DEADLINE */
+			__entry->next_cpu      = task_cpu(next);
+	),
+
+	TP_printk("task=%s pid=%d prio=%d cpu=%d waking task=%s pid=%d prio=%d cpu=%d",
+		__entry->curr_comm, __entry->curr_pid,
+		__entry->curr_prio, __entry->curr_cpu,
+		__entry->next_comm, __entry->next_pid,
+		__entry->next_prio, __entry->next_cpu)
+);
+
+TRACE_EVENT(ping_unlock_handoff,
+
+	TP_PROTO(struct task_struct *curr, struct task_struct *next),
+
+	TP_ARGS(curr, next),
+
+	TP_STRUCT__entry(
+		__array(char,   curr_comm,     TASK_COMM_LEN   )
+		__field(pid_t,  curr_pid                       )
+		__field(int,    curr_prio                      )
+		__field(int,    curr_cpu                       )
+		__array(char,   next_comm,     TASK_COMM_LEN   )
+		__field(pid_t,  next_pid                       )
+		__field(int,    next_prio                      )
+		__field(int,    next_cpu                       )
+	),
+
+	TP_fast_assign(
+		strscpy(__entry->curr_comm, curr->comm, TASK_COMM_LEN);
+			__entry->curr_pid      = curr->pid;
+			__entry->curr_prio     = curr->prio; /* XXX SCHED_DEADLINE */
+			__entry->curr_cpu      = task_cpu(curr);
+		strscpy(__entry->next_comm, next->comm, TASK_COMM_LEN);
+			__entry->next_pid      = next->pid;
+			__entry->next_prio     = next->prio; /* XXX SCHED_DEADLINE */
+			__entry->next_cpu      = task_cpu(next);
+	),
+
+	TP_printk("task=%s pid=%d prio=%d cpu=%d handing off to task=%s pid=%d prio=%d cpu=%d",
+		__entry->curr_comm, __entry->curr_pid,
+		__entry->curr_prio, __entry->curr_cpu,
+		__entry->next_comm, __entry->next_pid,
+		__entry->next_prio, __entry->next_cpu)
+);
 #endif /* _TRACE_LOCK_H */
+
 
 /* This part must be outside protection */
 #include <trace/define_trace.h>
