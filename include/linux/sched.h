@@ -1364,6 +1364,7 @@ struct task_struct {
 #endif
 	struct list_head		pi_state_list;
 	struct list_head		ping_state_list;
+	u64				queue_start_jiffies;
 	struct futex_pi_state		*pi_state_cache;
 	struct mutex			futex_exit_mutex;
 	unsigned int			futex_state;

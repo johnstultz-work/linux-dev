@@ -457,6 +457,7 @@ retry_private:
 		while (1) {
 			set_current_state(TASK_INTERRUPTIBLE|TASK_FREEZABLE);
 			if (!queued) {
+				current->queue_start_jiffies=jiffies_64;
 				futex_queue(&q, hb, current);
 				queued = true;
 			} else {
@@ -486,6 +487,7 @@ retry_private:
 
 			trace_ping_lock_waiting(current);
 			preempt_enable();
+
 
 			futex_do_wait(&q, to);
 
@@ -601,6 +603,7 @@ int futex_unlock_ping(u32 __user *uaddr, unsigned int flags)
 	struct task_struct *next;
 	union futex_key key = FUTEX_KEY_INIT;
 	struct futex_q *top_waiter;
+	bool force_handoff = false;
 	DEFINE_WAKE_Q(wake_q);
 	int ret;
 
@@ -644,6 +647,10 @@ retry:
 	ret = -EINVAL;
 	if (!ping_state)
 		goto out_unlock;
+
+	if (jiffies_64 - top_waiter->task->queue_start_jiffies >= 1)
+		force_handoff = true;
+
 	raw_spin_lock_irq(&ping_state->ping_mutex.wait_lock);
 
 	/*
@@ -680,7 +687,7 @@ retry:
 	 * no top_waiter.
 	 */
 	new = FUTEX_WAITERS;
-	if (ping_state->handoff) { /* Don't handoff to donor */
+	if (ping_state->handoff || force_handoff) {
 		trace_ping_unlock_handoff(current, next);
 		new |= task_pid_vnr(next);
 		ping_state->handoff = 0;
