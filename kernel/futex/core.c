@@ -1408,6 +1408,57 @@ static void exit_pi_state_list(struct task_struct *curr)
 static inline void exit_pi_state_list(struct task_struct *curr) { }
 #endif
 
+/* Similar to exit_pi_state_list() */
+static void exit_ping_state_list(struct task_struct *curr)
+{
+	struct list_head *next, *head = &curr->ping_state_list;
+	struct futex_pi_state *ping_state;
+	union futex_key key = FUTEX_KEY_INIT;
+
+	might_sleep();
+	WARN_ON(curr != current);
+	guard(private_hash)();
+
+	raw_spin_lock_irq(&curr->pi_futex_lock);
+	while (!list_empty(head)) {
+		next = head->next;
+		ping_state = list_entry(next, struct futex_pi_state, list);
+		if (1) {
+			CLASS(hb, hb)(&key);
+
+			if (!refcount_inc_not_zero(&ping_state->refcount)) {
+				raw_spin_unlock_irq(&curr->pi_futex_lock);
+				cpu_relax();
+				raw_spin_lock_irq(&curr->pi_futex_lock);
+				continue;
+			}
+			raw_spin_unlock_irq(&curr->pi_futex_lock);
+
+			spin_lock(&hb->lock);
+			raw_spin_lock_irq(&ping_state->ping_mutex.wait_lock);
+			raw_spin_lock(&curr->pi_futex_lock);
+			if (head->next != next) {
+				raw_spin_unlock(&ping_state->ping_mutex.wait_lock);
+				spin_unlock(&hb->lock);
+				put_ping_state(ping_state);
+				continue;
+			}
+
+			WARN_ON(ping_state->owner != curr);
+			WARN_ON(list_empty(&ping_state->list));
+			list_del_init(&ping_state->list);
+			ping_state->owner = NULL;
+			raw_spin_unlock(&curr->pi_futex_lock);
+			raw_spin_unlock_irq(&ping_state->ping_mutex.wait_lock);
+			spin_unlock(&hb->lock);
+		}
+		put_ping_state(ping_state);
+
+		raw_spin_lock_irq(&curr->pi_futex_lock);
+	}
+	raw_spin_unlock_irq(&curr->pi_futex_lock);
+}
+
 static void futex_cleanup(struct task_struct *tsk)
 {
 	if (unlikely(tsk->robust_list)) {
@@ -1424,6 +1475,9 @@ static void futex_cleanup(struct task_struct *tsk)
 
 	if (unlikely(!list_empty(&tsk->pi_state_list)))
 		exit_pi_state_list(tsk);
+
+	if (unlikely(!list_empty(&tsk->ping_state_list)))
+		exit_ping_state_list(tsk);
 }
 
 /**
