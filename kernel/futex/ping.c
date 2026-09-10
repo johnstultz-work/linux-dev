@@ -349,22 +349,15 @@ static int ping_spin_or_trylock(u32 __user *uaddr,
 	while (1) {
 		new = ping_mutex_owner(&ping_state->ping_mutex);
 		ret = 0;
-		if (!owner || !new || new == current) {
-			ret = futex_trylock_ping_state(uaddr, ping_state,
-			    handoff);
-			if (ret != 0)
-				break;
-			/* Spin on new owner if we didn't get the lock */
-			owner = ping_mutex_owner(&ping_state->ping_mutex);
-			goto next;
-		}
+		if (!owner || !new || new == current)
+			return futex_trylock_ping_state(uaddr, ping_state,
+						        handoff);
 		if (new != owner) {
-			owner = ping_mutex_owner(&ping_state->ping_mutex);
-			goto next;
+			ret = 0;
+			break;
 		}
 		if (!owner_on_cpu(owner) || need_resched())
 			break;
-next:
 		cpu_relax();
 	}
 
