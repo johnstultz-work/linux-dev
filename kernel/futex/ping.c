@@ -654,6 +654,16 @@ retry:
 	/* Leave it queued, it gets unqueued on the lock side */
 	if (next == NULL) {
 		next = get_task_struct(top_waiter->task);
+		/*
+		 * if we are waking the top waiter, rotate it
+		 * to the end of the list, so if top waiter
+		 * doesn't get to run, and someone steals the
+		 * lock, on unlock ensure we wake the next in
+		 * line and avoid repeatedly waking the same
+		 * task over and over until it can run.
+		 */
+		plist_del(&top_waiter->list, &hb->chain);
+		plist_add(&top_waiter->list, &hb->chain);
 		clear_task_blocked_on(next, &ping_state->ping_mutex);
 	}
 	set_task_blocked_on_waking(next, &ping_state->ping_mutex);
