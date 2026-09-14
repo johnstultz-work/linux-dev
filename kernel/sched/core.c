@@ -7017,6 +7017,9 @@ find_proxy_task(struct rq *rq, struct task_struct *donor, struct rq_flags *rf)
 	__must_hold(__rq_lockp(rq))
 {
 	struct task_struct *owner = NULL;
+	struct task_struct *cycle_checkpoint = donor;
+	unsigned int cycle_power = 1;
+	unsigned int cycle_span = 0;
 	bool curr_in_chain = false;
 	int this_cpu = cpu_of(rq);
 	struct task_struct *p;
@@ -7025,8 +7028,16 @@ find_proxy_task(struct rq *rq, struct task_struct *donor, struct rq_flags *rf)
 
 	/* Follow blocked_on chain. */
 	for (p = donor; p->is_blocked; p = owner) {
-		/* if its PROXY_WAKING, do return migration or run if current */
 		struct mutex *mutex = p->blocked_on;
+
+		/* Keep Brent's checkpoint state local to this owner walk. */
+		if (cycle_span == cycle_power) {
+			cycle_checkpoint = p;
+			cycle_power <<= 1;
+			cycle_span = 0;
+		}
+
+		/* if its PROXY_WAKING, do return migration or run if current */
 		if (!mutex) {
 			clear_task_blocked_on(p, mutex);
 			if (task_current(rq, p) || p->wake_cpu == task_cpu(p)) {
@@ -7143,8 +7154,13 @@ find_proxy_task(struct rq *rq, struct task_struct *donor, struct rq_flags *rf)
 			goto resched_idle;
 		}
 
-		/* Limit the depth we'll proxy to avoid cyclic deadlocks */
-		if (++chain_depth > MAX_PROXY_CHAIN_DEPTH) {
+		/*
+		 * Check for cycles, and worst case limit the depth
+		 * we'll proxy to avoid cyclic deadlocks
+		 */
+		cycle_span++;
+		if ((owner == cycle_checkpoint) ||
+		    (++chain_depth > MAX_PROXY_CHAIN_DEPTH)) {
 			__clear_task_blocked_on(p, NULL);
 			goto deactivate;
 		}
