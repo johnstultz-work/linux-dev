@@ -1374,17 +1374,6 @@ SYSCALL_DEFINE0(sched_yield)
 	return 0;
 }
 
-SYSCALL_DEFINE1(sched_directed_yield, pid_t, pid)
-{
-	if (!sched_proxy_exec())
-		return -ENOTSUPP;
-
-	CLASS(find_get_task, p)(pid);
-	if (!p)
-		return -ESRCH;
-
-	return do_proxy_yield(p);
-}
 /**
  * yield - yield the current processor to other threads.
  *
