@@ -193,56 +193,6 @@ static int __init setup_proxy_exec_toggle(void)
 }
 late_initcall(setup_proxy_exec_toggle);
 
-struct directed_yield {
-	raw_spinlock_t yield_lock;
-	struct task_struct *waiting_on;
-	u64 sum_exec_runtime_exp;
-};
-
-static inline struct task_struct *directed_yield_waiting_on(struct directed_yield *dy)
-{
-	struct task_struct *p;
-
-	BUG_ON(!dy);
-
-	p = dy->waiting_on;
-
-	/* Assume if we're not on the rq then we're sleeping or exited */
-	if (!READ_ONCE(p->on_rq))
-		return NULL;
-
-	/* If waiting_on task has made enough progress, stop yielding */
-	if (p->se.sum_exec_runtime >= dy->sum_exec_runtime_exp)
-		return NULL;
-
-	return p;
-}
-
-#define SOME_VALUE 10000 /*10us?*/
-int do_proxy_yield(struct task_struct *p)
-{
-	struct directed_yield dy;
-	unsigned long flags;
-
-
-	dy.waiting_on = p;
-	raw_spin_lock_init(&dy.yield_lock);
-	dy.sum_exec_runtime_exp = p->se.sum_exec_runtime + SOME_VALUE;
-
-	raw_spin_lock_irqsave(&current->blocked_lock, flags);	
-	__set_task_blocked_on(current, &dy, BO_T_DYIELD);
-	set_current_state(TASK_UNINTERRUPTIBLE);
-	raw_spin_unlock(&current->blocked_lock);
-
-	schedule();
-	set_current_state(TASK_RUNNING);
-
-	/* XXX Do I need this? */
-	clear_task_blocked_on(current, &dy);
-
-	return 0;
-}
-
 static inline struct task_struct *__blocked_on_owner(struct blocked_on_lock *bo)
 {
 	switch (bo->type) {
@@ -254,8 +204,6 @@ static inline struct task_struct *__blocked_on_owner(struct blocked_on_lock *bo)
 		return rwsem_writer_owner(bo->lock);
 	case BO_T_PING_FUTEX:
 		return ping_mutex_owner(bo->lock);
-	case BO_T_DYIELD:
-		return directed_yield_waiting_on(bo->lock);
 	default:
 		BUG();
 	}
@@ -7482,8 +7430,6 @@ lock_blocked_on_lock(struct blocked_on_lock *bo)
 		raw_spin_lock(&((struct rw_semaphore *)bo->lock)->wait_lock);
 	else if (bo->type == BO_T_PING_FUTEX)
 		ping_mutex_lock_wait_lock(bo->lock);
-	else if (bo->type == BO_T_DYIELD)
-		raw_spin_lock(&((struct directed_yield *)bo->lock)->yield_lock);
 	else
 		BUG();
 }
@@ -7497,8 +7443,6 @@ unlock_blocked_on_lock(struct blocked_on_lock *bo)
 		raw_spin_unlock(&((struct rw_semaphore *)bo->lock)->wait_lock);
 	else if (bo->type == BO_T_PING_FUTEX)
 		ping_mutex_unlock_wait_lock(bo->lock);
-	else if (bo->type == BO_T_DYIELD)
-		raw_spin_unlock(&((struct directed_yield *)bo->lock)->yield_lock);
 	else
 		BUG();
 }
