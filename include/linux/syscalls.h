@@ -1223,8 +1223,6 @@ asmlinkage long sys_ni_syscall(void);
 
 asmlinkage long sys_ni_posix_timers(void);
 
-asmlinkage long sys_sched_directed_yield(pid_t pid);
-
 /*
  * Kernel code should not call syscalls (i.e., sys_xyzyyz()) directly.
  * Instead, use one of the functions which work equivalently, such as
