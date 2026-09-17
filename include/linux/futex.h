@@ -70,6 +70,7 @@ static inline void futex_init_task(struct task_struct *tsk)
 {
 	memset(&tsk->futex, 0, sizeof(tsk->futex));
 	INIT_LIST_HEAD(&tsk->futex.pi_state_list);
+	INIT_LIST_HEAD(&tsk->futex.ping_state_list);
 	tsk->futex.state = FUTEX_STATE_OK;
 	mutex_init(&tsk->futex.exit_mutex);
 }
@@ -161,5 +162,15 @@ void futex_mm_init(struct mm_struct *mm);
 #else
 static inline void futex_mm_init(struct mm_struct *mm) { }
 #endif /* !CONFIG_FUTEX */
+
+struct ping_mutex {
+	raw_spinlock_t wait_lock;
+	struct task_struct *owner;
+};
+
+static inline struct task_struct *ping_mutex_owner(struct ping_mutex *ping_mutex)
+{
+	return READ_ONCE(ping_mutex->owner);
+}
 
 #endif /* _LINUX_FUTEX_H */
