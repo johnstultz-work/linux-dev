@@ -659,7 +659,7 @@ retry:
 		plist_add(&top_waiter->list, &hb->chain);
 		clear_task_blocked_on(next, &ping_state->ping_mutex);
 	}
-	set_task_blocked_on_waking(next, &ping_state->ping_mutex);
+	clear_task_blocked_on(next, &ping_state->ping_mutex);
 	wake_q_add_safe(&wake_q, next);
 	spin_unlock(&hb->lock);
 
