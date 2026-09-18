@@ -6,6 +6,32 @@
 #include <trace/events/lock.h>
 #include "futex.h"
 
+
+#if 1
+bool use_proxy = false;
+bool do_spin = true;
+bool rotate_wakers = false;
+bool do_handoffs = false;
+bool always_handoff = false;
+bool never_handoff= false;
+#elif 0
+//FUTEX_WAIT style
+bool use_proxy = false;
+bool do_spin = false;
+bool rotate_wakers = true;
+bool do_handoffs = false;
+bool always_handoff = false;
+bool never_handoff= true;
+#else
+//FUTEX_LOCK_PI style
+bool use_proxy = false;
+bool do_spin = false;
+bool rotate_wakers = false;
+bool do_handoffs = false;
+bool always_handoff = true;
+bool never_handoff= false;
+#endif
+
 static int futex_trylock_ping_state(u32 __user *uaddr,
 				    struct futex_pi_state *ping_state,
 				    bool handoff);
@@ -212,7 +238,7 @@ static int futex_trylock_ping_state(u32 __user *uaddr,
 		}
 		ping_state->pickup = 0;
 		ret = 1;
-	} else if (handoff && !ping_state->handoff)
+	} else if (do_handoffs && handoff && !ping_state->handoff)
 		ping_state->handoff = 1;
 	raw_spin_unlock_irq(&ping_state->ping_mutex.wait_lock);
 	return ret;
@@ -334,9 +360,13 @@ static int ping_spin_or_trylock(u32 __user *uaddr,
 				struct futex_pi_state *ping_state,
 				bool handoff)
 {
-	struct task_struct *owner = ping_mutex_owner(&ping_state->ping_mutex);
-	struct task_struct *new;
+	struct task_struct *owner, *new;
 
+	if (!do_spin)
+		return futex_trylock_ping_state(uaddr, ping_state,
+						        handoff);
+
+	owner = ping_mutex_owner(&ping_state->ping_mutex);
 	if (owner && !owner_on_cpu(owner))
 		return 0;
 
@@ -482,7 +512,8 @@ retry_private:
 				goto out_unqueue;
 			}
 
-			set_task_blocked_on(current, &q.ping_state->ping_mutex,
+			if (use_proxy)
+				set_task_blocked_on(current, &q.ping_state->ping_mutex,
 					    BO_T_PING_FUTEX);
 
 			trace_ping_lock_waiting(current);
@@ -660,6 +691,9 @@ retry:
 	 */
 
 	next = ping_current_proxy_donor(ping_state);
+	if (next)
+		force_handoff = true;
+
 	get_ping_state(ping_state);
 	/* Leave it queued, it gets unqueued on the lock side */
 	if (next == NULL) {
@@ -672,9 +706,10 @@ retry:
 		 * line and avoid repeatedly waking the same
 		 * task over and over until it can run.
 		 */
-		plist_del(&top_waiter->list, &hb->chain);
-		plist_add(&top_waiter->list, &hb->chain);
-		clear_task_blocked_on(next, &ping_state->ping_mutex);
+		if (rotate_wakers) {
+			plist_del(&top_waiter->list, &hb->chain);
+			plist_add(&top_waiter->list, &hb->chain);
+		}
 	}
 	clear_task_blocked_on(next, &ping_state->ping_mutex);
 	trace_ping_unlock_waking(current, next);
@@ -686,6 +721,12 @@ retry:
 	 * It will get removed by the next unlocker who notices there is
 	 * no top_waiter.
 	 */
+
+	if (never_handoff)
+		force_handoff = false;
+	if (always_handoff)
+		force_handoff = true;
+
 	new = FUTEX_WAITERS;
 	if (ping_state->handoff || force_handoff) {
 		trace_ping_unlock_handoff(current, next);
