@@ -347,14 +347,14 @@ static int ping_spin_or_trylock(u32 __user *uaddr,
 
 	while (1) {
 		new = ping_mutex_owner(&ping_state->ping_mutex);
-		if (!owner || !new || new == current)
-			return futex_trylock_ping_state(uaddr, ping_state,
+		if (!owner || !new || new == current) {
+			int ret =  futex_trylock_ping_state(uaddr, ping_state,
 						        handoff);
-		if (new != owner) {
-			trace_ping_lock_spin_stopped(current, "owner changed");
-			break;
+			if (ret)
+				return ret;
+			owner = new;
 		}
-		if (!owner_on_cpu(owner)) {
+		if (owner && !owner_on_cpu(owner)) {
 			trace_ping_lock_spin_stopped(current, "!on_cpu");
 			break;
 		}
