@@ -493,10 +493,6 @@ retry_private:
 				current->queue_start_jiffies=jiffies_64;
 				futex_queue(&q, hb, current);
 				queued = true;
-			} else {
-				WARN_ON_ONCE(plist_node_empty(&q.list));
-				spin_unlock(&hb->lock);
-				__release(q->lock_ptr);
 			}
 
 			preempt_disable();
@@ -528,12 +524,13 @@ retry_private:
 			clear_task_blocked_on(current,
 					      &q.ping_state->ping_mutex);
 
-			futex_q_lockptr_lock(&q);
 			if (to && !to->task) {
+				futex_q_lockptr_lock(&q);
 				ret = -ETIMEDOUT;
 				goto out_unqueue;
 			}
 			if (signal_pending(current)) {
+				futex_q_lockptr_lock(&q);
 				ret = -EINTR;
 				goto out_unqueue;
 			}
