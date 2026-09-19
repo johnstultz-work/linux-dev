@@ -8,10 +8,10 @@
 
 
 #if 1
-bool use_proxy = false;
+bool use_proxy = true;
 bool do_spin = true;
-bool rotate_wakers = false;
-bool do_handoffs = false;
+bool rotate_wakers = true;
+bool do_handoffs = true;
 bool always_handoff = false;
 bool never_handoff= false;
 #elif 0
