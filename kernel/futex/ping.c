@@ -130,10 +130,13 @@ int fixup_ping_owner_after_user_steal(struct futex_pi_state *ping_state,
 	p = find_get_task_by_vpid(uval & FUTEX_TID_MASK);
 	if (p == NULL)
 		return pi_handle_exit_race(uaddr, uval, NULL);
-	if (unlikely(p->flags & PF_KTHREAD))
+	if (unlikely(p->flags & PF_KTHREAD)) {
+		put_task_struct(p);
 		return -EPERM;
+	}
 	ping_state_update_owner(ping_state, p);
 	WRITE_ONCE(ping_state->ping_mutex.owner, p);
+	put_task_struct(p);
 
 	return 0;
 }
