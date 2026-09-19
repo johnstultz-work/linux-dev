@@ -6874,6 +6874,7 @@ find_proxy_task(struct rq *rq, struct task_struct *donor, struct rq_flags *rf)
 			clear_task_blocked_on(p, mutex);
 			if (task_current(rq, p) || p->wake_cpu == task_cpu(p)) {
 				p->is_blocked = 0;
+				WRITE_ONCE(p->__state, TASK_RUNNING);
 				return p;
 			}
 			goto activate;
@@ -6911,6 +6912,7 @@ find_proxy_task(struct rq *rq, struct task_struct *donor, struct rq_flags *rf)
 			__clear_task_blocked_on(p, NULL);
 			if (task_current(rq, p) || p->wake_cpu == task_cpu(p)) {
 				p->is_blocked = 0;
+				WRITE_ONCE(p->__state, TASK_RUNNING);
 				return p;
 			}
 			goto activate;
