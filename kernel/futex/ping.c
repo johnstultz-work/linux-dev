@@ -385,7 +385,7 @@ static int ping_spin_or_trylock(u32 __user *uaddr,
 						        handoff);
 			if (ret)
 				return ret;
-			owner = new;
+			owner = ping_mutex_owner(&ping_state->ping_mutex);
 		}
 		if (owner && !owner_on_cpu(owner)) {
 			trace_ping_lock_spin_stopped(current, "!on_cpu");
