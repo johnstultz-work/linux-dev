@@ -160,6 +160,7 @@ struct futex_pi_state {
 	refcount_t refcount;
 	bool handoff;
 	bool pickup;
+	u64 last_handoff_jiffies;
 
 	union futex_key key;
 } __randomize_layout;

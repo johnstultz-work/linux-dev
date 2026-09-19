@@ -11,7 +11,7 @@
 bool use_proxy = true;
 bool do_spin = true;
 bool rotate_wakers = true;
-bool do_handoffs = true;
+bool do_handoffs = false;
 bool always_handoff = false;
 bool never_handoff= false;
 #elif 0
@@ -679,7 +679,8 @@ retry:
 	if (!ping_state)
 		goto out_unlock;
 
-	if (jiffies_64 - top_waiter->task->queue_start_jiffies >= 1)
+	if (time_after64(jiffies_64, top_waiter->task->queue_start_jiffies + 2) &&
+	    time_after64(jiffies_64, ping_state->last_handoff_jiffies + 2))
 		force_handoff = true;
 
 	raw_spin_lock_irq(&ping_state->ping_mutex.wait_lock);
@@ -733,6 +734,7 @@ retry:
 		new |= task_pid_vnr(next);
 		ping_state->handoff = 0;
 		ping_state->pickup = 1;
+		ping_state->last_handoff_jiffies = jiffies_64;
 		WRITE_ONCE(ping_state->ping_mutex.owner, next);
 	} else
 		WRITE_ONCE(ping_state->ping_mutex.owner, NULL);
