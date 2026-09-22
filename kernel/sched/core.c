@@ -1441,11 +1441,8 @@ static void nohz_csd_func(void *info)
 #endif /* CONFIG_NO_HZ_COMMON */
 
 #ifdef CONFIG_NO_HZ_FULL
-static inline bool __need_bw_check(struct rq *rq, struct task_struct *p)
+static inline bool __need_bw_check(struct task_struct *p)
 {
-	if (rq->nr_running != 1)
-		return false;
-
 	if (p->sched_class != &fair_sched_class)
 		return false;
 
@@ -1461,6 +1458,14 @@ bool sched_can_stop_tick(struct rq *rq)
 
 	/* Deadline tasks, even if single, need the tick */
 	if (rq->dl.dl_nr_running)
+		return false;
+
+	/*
+	 * A bandwidth-constrained FAIR donor can proxy-execute an owner from a
+	 * lower scheduling class. Check the selected scheduling context before
+	 * the class-specific fast paths below inspect the execution context.
+	 */
+	if (__need_bw_check(rq->donor) && cfs_task_bw_constrained(rq->donor))
 		return false;
 
 	/*
@@ -1492,18 +1497,6 @@ bool sched_can_stop_tick(struct rq *rq)
 
 	if (rq->cfs.h_nr_queued > 1)
 		return false;
-
-	/*
-	 * If there is one task and it has CFS runtime bandwidth constraints
-	 * and it's on the cpu now we don't want to stop the tick.
-	 * This check prevents clearing the bit if a newly enqueued task here is
-	 * dequeued by migrating while the constrained task continues to run.
-	 * E.g. going from 2->1 without going through pick_next_task().
-	 */
-	if (__need_bw_check(rq, rq->curr)) {
-		if (cfs_task_bw_constrained(rq->curr))
-			return false;
-	}
 
 	return true;
 }
@@ -2344,7 +2337,8 @@ void deactivate_task(struct rq *rq, struct task_struct *p, int flags)
 	dequeue_task(rq, p, flags);
 }
 
-static void block_task(struct rq *rq, struct task_struct *p, unsigned long task_state)
+static bool dequeue_block_task(struct rq *rq, struct task_struct *p,
+			       unsigned long task_state)
 {
 	int flags = DEQUEUE_NOCLOCK;
 
@@ -2365,9 +2359,15 @@ static void block_task(struct rq *rq, struct task_struct *p, unsigned long task_
 	 *
 	 * Where __schedule() and ttwu() have matching control dependencies.
 	 *
-	 * After this, schedule() must not care about p->state any more.
+	 * Once the caller invokes __block_task(), schedule() must not care about
+	 * p->state any more.
 	 */
-	if (dequeue_task(rq, p, DEQUEUE_SLEEP | flags))
+	return dequeue_task(rq, p, DEQUEUE_SLEEP | flags);
+}
+
+static void block_task(struct rq *rq, struct task_struct *p, unsigned long task_state)
+{
+	if (dequeue_block_task(rq, p, task_state))
 		__block_task(rq, p);
 }
 
@@ -4159,6 +4159,8 @@ int task_is_pushable(struct rq *rq, struct task_struct *p, int cpu)
  */
 static inline bool proxy_needs_return(struct rq *rq, struct task_struct *p)
 {
+	bool dequeued;
+
 	/*
 	 * Typically per __set_task_cpu(), task_cpu(p) == p->wake_cpu.
 	 *
@@ -4181,12 +4183,23 @@ static inline bool proxy_needs_return(struct rq *rq, struct task_struct *p)
 		/* If already current, don't need to return migrate */
 		if (task_current(rq, p))
 			return false;
-
-		/* If we're return migrating the rq->donor, switch it out for idle */
-		if (task_current_donor(rq, p))
-			proxy_reset_donor(rq);
 	}
-	block_task(rq, p, TASK_WAKING);
+
+	dequeued = dequeue_block_task(rq, p, TASK_WAKING);
+
+	/*
+	 * Dequeue @p from its scheduling class before resetting rq->donor.
+	 * In particular, sched_ext needs to end the donor's running session
+	 * and clear SCX_TASK_QUEUED before put_prev_task_scx() is called by
+	 * proxy_reset_donor(); otherwise it would reenqueue the blocked donor.
+	 *
+	 * Keep on_rq set until all donor references have been replaced.
+	 */
+	if (task_current_donor(rq, p))
+		proxy_reset_donor(rq);
+
+	if (dequeued)
+		__block_task(rq, p);
 	return true;
 }
 #else /* !CONFIG_SCHED_PROXY_EXEC */
@@ -4283,7 +4296,7 @@ static int ttwu_runnable(struct task_struct *p, int wake_flags)
 		 * When on_rq && !on_cpu the task is preempted, see if
 		 * it should preempt the task that is current now.
 		 */
-		wakeup_preempt(rq, p, wake_flags);
+		wakeup_preempt(rq, p, wake_flags | WF_TTWU_RQ);
 	}
 	ttwu_do_wakeup(p);
 	return 1;
@@ -7297,6 +7310,34 @@ static void proxy_deactivate(struct rq *rq, struct task_struct *donor)
 	block_task(rq, donor, state);
 }
 
+/*
+ * Remove a retained proxy donor before changing its scheduler ownership.
+ * The caller holds p->pi_lock, so p cannot wake and migrate if block_task()
+ * drops it from the runqueue. If DELAY_DEQUEUE keeps a blocked fair task
+ * queued, switching_from_fair() completes the dequeue in the immediately
+ * following sched_change_begin().
+ */
+void sched_proxy_block_task(struct rq *rq, struct task_struct *p)
+{
+	unsigned long state = READ_ONCE(p->__state);
+
+	lockdep_assert_held(&p->pi_lock);
+	lockdep_assert_rq_held(rq);
+
+	if (!p->is_blocked || !task_on_rq_queued(p))
+		return;
+	if (WARN_ON_ONCE(state == TASK_RUNNING))
+		return;
+
+	if (task_current_donor(rq, p))
+		proxy_reset_donor(rq);
+
+	if (!p->se.sched_delayed)
+		block_task(rq, p, state);
+
+	WARN_ON_ONCE(task_on_rq_queued(p) && !p->se.sched_delayed);
+}
+
 static inline void proxy_release_rq_lock(struct rq *rq, struct rq_flags *rf)
 	__releases(__rq_lockp(rq))
 {
@@ -7541,7 +7582,7 @@ find_proxy_task(struct rq *rq, struct task_struct *donor, struct rq_flags *rf)
 			 * migrate_task case.
 			 */
 			if (curr_in_chain)
-				return proxy_resched_idle(rq);
+				goto resched_idle;
 			/*
 			 * If !@owner->on_rq, holding @rq->lock will not pin the task,
 			 * so we cannot drop @mutex->wait_lock until we're sure its a blocked
@@ -7574,7 +7615,7 @@ find_proxy_task(struct rq *rq, struct task_struct *donor, struct rq_flags *rf)
 			 * and leave that CPU to sort things out.
 			 */
 			if (curr_in_chain)
-				return proxy_resched_idle(rq);
+				goto resched_idle;
 			goto migrate_task;
 		}
 
@@ -7587,7 +7628,7 @@ find_proxy_task(struct rq *rq, struct task_struct *donor, struct rq_flags *rf)
 			 * case we should end up back in find_proxy_task(), this time
 			 * hopefully with all relevant tasks already enqueued.
 			 */
-			return proxy_resched_idle(rq);
+			goto resched_idle;
 		}
 
 		/*
@@ -7624,7 +7665,7 @@ find_proxy_task(struct rq *rq, struct task_struct *donor, struct rq_flags *rf)
 			 * So schedule rq->idle so that ttwu_runnable() can get the rq
 			 * lock and mark owner as running.
 			 */
-			return proxy_resched_idle(rq);
+			goto resched_idle;
 		}
 		/*
 		 * OK, now we're absolutely sure @owner is on this
@@ -7637,6 +7678,8 @@ find_proxy_task(struct rq *rq, struct task_struct *donor, struct rq_flags *rf)
 
 	return owner;
 
+resched_idle:
+	return proxy_resched_idle(rq);
 activate:
 	proxy_activate(rq, rf, p);
 	return NULL;
@@ -7705,6 +7748,7 @@ static void __sched notrace __schedule(int sched_mode)
 	 */
 	bool preempt = sched_mode > SM_NONE;
 	bool is_switch = false;
+	bool donor_changed = false;
 	unsigned long *switch_count;
 	unsigned long prev_state;
 	struct rq_flags rf;
@@ -7772,13 +7816,12 @@ static void __sched notrace __schedule(int sched_mode)
 		}
 	} else if (!preempt && prev_state) {
 		/*
-		 * We pass task_is_blocked() as the should_block arg
-		 * in order to keep mutex-blocked tasks on the runqueue
-		 * for slection with proxy-exec (without proxy-exec
-		 * task_is_blocked() will always be false).
+		 * Keep mutex-blocked tasks on the runqueue for proxy execution
+		 * only when their scheduling class allows it. Without proxy
+		 * execution, task_is_blocked() always returns false.
 		 */
 		try_to_block_task(rq, prev, &prev_state,
-				  !task_is_blocked(prev));
+				  !task_is_blocked(prev) || !scx_allow_proxy_exec(prev));
 		switch_count = &prev->nvcsw;
 	}
 
@@ -7802,6 +7845,9 @@ pick_again:
 			}
 			if (next == rq->idle) {
 				zap_balance_callbacks(rq);
+				scx_proxy_reenqueue_retry(rq);
+				if (rq->donor != prev_donor)
+					donor_changed = true;
 				goto keep_resched;
 			}
 			if (!sched_cpu_cookie_match(rq, next)) {
@@ -7827,6 +7873,10 @@ pick_again:
 			donor->sched_class->put_prev_task(rq, donor, donor);
 			donor->sched_class->set_next_task(rq, donor, true);
 		}
+		scx_proxy_donor_start(rq);
+		scx_proxy_reenqueue_retry(rq);
+		if (rq->donor != prev_donor)
+			donor_changed = true;
 	} else {
 		rq_set_donor(rq, next);
 	}
@@ -7845,6 +7895,15 @@ keep_resched:
 		 * changes to task_struct made by pick_next_task().
 		 */
 		RCU_INIT_POINTER(rq->curr, next);
+		/*
+		 * Some scheduling classes (e.g., sched_ext) may need to inspect
+		 * both rq->curr and rq->donor when evaluating the tick
+		 * dependency. Wait until they reflect the selected execution
+		 * and scheduling contexts, respectively, to prevent a transient
+		 * mismatch from affecting the tick decision.
+		 */
+		if (donor_changed)
+			sched_update_tick_dependency(rq);
 
 		/*
 		 * The membarrier system call requires each architecture
@@ -7879,6 +7938,8 @@ keep_resched:
 		/* Also unlocks the rq: */
 		rq = context_switch(rq, prev, next, &rf);
 	} else {
+		if (donor_changed)
+			sched_update_tick_dependency(rq);
 		rq_unpin_lock(rq, &rf);
 		__balance_callbacks(rq, NULL);
 		hrtick_schedule_exit(rq);

@@ -791,6 +791,7 @@ enum scx_rq_flags {
 	SCX_RQ_BAL_CB_PENDING	= 1 << 6, /* must queue a cb after dispatching */
 	SCX_RQ_SUB_IDLE_RENOTIFY	= 1 << 7, /* sub-scheds are owed update_idle() */
 	SCX_RQ_ROOT_IDLE_RENOTIFY	= 1 << 8, /* the root is owed update_idle() */
+	SCX_RQ_PROXY_RETRY	= 1 << 9, /* proxy-rejected tasks need retry */
 
 	SCX_RQ_IN_WAKEUP	= 1 << 16,
 	SCX_RQ_IN_DISPATCH	= 1 << 17,
@@ -810,8 +811,8 @@ struct scx_rq_rescue {
 
 struct scx_rq {
 	struct scx_dispatch_q	local_dsq;
+	struct scx_dispatch_q	reject_dsq;		/* staging for rejected tasks */
 #ifdef CONFIG_EXT_SUB_SCHED
-	struct scx_dispatch_q	reject_dsq;		/* staging for cap-rejected tasks */
 	struct scx_rq_rescue	rescue;
 #endif
 	struct list_head	runnable_list;		/* runnable tasks on this rq */
@@ -2521,6 +2522,12 @@ static inline bool task_is_blocked(struct task_struct *p)
 	return !!p->blocked_on.lock;
 }
 
+#ifdef CONFIG_SCHED_PROXY_EXEC
+void sched_proxy_block_task(struct rq *rq, struct task_struct *p);
+#else
+static inline void sched_proxy_block_task(struct rq *rq, struct task_struct *p) {}
+#endif
+
 static inline int task_on_cpu(struct rq *rq, struct task_struct *p)
 {
 	return p->on_cpu;
@@ -2545,6 +2552,7 @@ static inline int task_on_rq_migrating(struct task_struct *p)
 #define WF_MIGRATED		0x20 /* Internal use, task got migrated */
 #define WF_CURRENT_CPU		0x40 /* Prefer to move the wakee to the current CPU. */
 #define WF_RQ_SELECTED		0x80 /* ->select_task_rq() was called */
+#define WF_TTWU_RQ		0x100 /* Wakeup completed through ttwu_runnable() */
 
 static_assert(WF_EXEC == SD_BALANCE_EXEC);
 static_assert(WF_FORK == SD_BALANCE_FORK);
