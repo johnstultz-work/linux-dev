@@ -636,6 +636,7 @@ int futex_unlock_ping(u32 __user *uaddr, unsigned int flags)
 	struct futex_q *top_waiter;
 	bool force_handoff = false;
 	DEFINE_WAKE_Q(wake_q);
+	char *msg = "";
 	int ret;
 
 	trace_ping_unlocked(current);
@@ -679,9 +680,10 @@ retry:
 	if (!ping_state)
 		goto out_unlock;
 
-	if (time_after64(jiffies_64, top_waiter->task->queue_start_jiffies + 2) &&
-	    time_after64(jiffies_64, ping_state->last_handoff_jiffies + 2))
+	if (time_after64(jiffies_64, top_waiter->task->queue_start_jiffies + 2)) {
+		msg = "waiter timeout";
 		force_handoff = true;
+	}
 
 	raw_spin_lock_irq(&ping_state->ping_mutex.wait_lock);
 
@@ -692,8 +694,10 @@ retry:
 	 */
 
 	next = ping_current_proxy_donor(ping_state);
-	if (next)
+	if (next) {
+		msg = "donor handoff";
 		force_handoff = true;
+	}
 
 	get_ping_state(ping_state);
 	/* Leave it queued, it gets unqueued on the lock side */
@@ -725,12 +729,14 @@ retry:
 
 	if (never_handoff)
 		force_handoff = false;
-	if (always_handoff)
+	if (always_handoff) {
+		msg = "always_handoff set";
 		force_handoff = true;
+	}
 
 	new = FUTEX_WAITERS;
 	if (ping_state->handoff || force_handoff) {
-		trace_ping_unlock_handoff(current, next);
+		trace_ping_unlock_handoff(current, next, msg);
 		new |= task_pid_vnr(next);
 		ping_state->handoff = 0;
 		ping_state->pickup = 1;

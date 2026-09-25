@@ -306,9 +306,9 @@ TRACE_EVENT(ping_unlock_waking,
 
 TRACE_EVENT(ping_unlock_handoff,
 
-	TP_PROTO(struct task_struct *curr, struct task_struct *next),
+	TP_PROTO(struct task_struct *curr, struct task_struct *next, char* msg),
 
-	TP_ARGS(curr, next),
+	TP_ARGS(curr, next, msg),
 
 	TP_STRUCT__entry(
 		__array(char,   curr_comm,     TASK_COMM_LEN   )
@@ -319,6 +319,7 @@ TRACE_EVENT(ping_unlock_handoff,
 		__field(pid_t,  next_pid                       )
 		__field(int,    next_prio                      )
 		__field(int,    next_cpu                       )
+		__array(char,   msg,     TASK_COMM_LEN   )
 	),
 
 	TP_fast_assign(
@@ -330,13 +331,15 @@ TRACE_EVENT(ping_unlock_handoff,
 			__entry->next_pid      = next->pid;
 			__entry->next_prio     = next->prio; /* XXX SCHED_DEADLINE */
 			__entry->next_cpu      = task_cpu(next);
+		strscpy(__entry->msg, msg, TASK_COMM_LEN);
 	),
 
-	TP_printk("task=%s pid=%d prio=%d cpu=%d handing off to task=%s pid=%d prio=%d cpu=%d",
+	TP_printk("task=%s pid=%d prio=%d cpu=%d handing off to task=%s pid=%d prio=%d cpu=%d - %s",
 		__entry->curr_comm, __entry->curr_pid,
 		__entry->curr_prio, __entry->curr_cpu,
 		__entry->next_comm, __entry->next_pid,
-		__entry->next_prio, __entry->next_cpu)
+		__entry->next_prio, __entry->next_cpu,
+		__entry->msg)
 );
 #endif /* _TRACE_LOCK_H */
 
