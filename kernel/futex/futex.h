@@ -161,6 +161,8 @@ struct futex_pi_state {
 	bool handoff;
 	bool pickup;
 	u64 last_handoff_jiffies;
+	struct task_struct *last_owner;
+	u64 same_owner_count;
 
 	union futex_key key;
 } __randomize_layout;

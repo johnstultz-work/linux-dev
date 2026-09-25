@@ -727,6 +727,17 @@ retry:
 	 * no top_waiter.
 	 */
 
+	if (next && ping_state->last_owner == current) {
+		if (ping_state->same_owner_count++ > 100){ 
+			msg = "sameowner limit";
+			force_handoff = true;
+		}
+	} else {
+		ping_state->last_owner = current;
+		ping_state->same_owner_count = 0;
+	}
+
+
 	if (never_handoff)
 		force_handoff = false;
 	if (always_handoff) {
