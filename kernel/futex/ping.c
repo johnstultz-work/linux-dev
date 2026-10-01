@@ -531,6 +531,9 @@ out_unqueue:
 		} else
 			/* This also puts the ping_state */
 			futex_unqueue_ping(&q);
+		spin_unlock(q.lock_ptr);
+		__release(q.lock_ptr);
+		goto out;
 
 out_unlock:
 		futex_q_unlock(hb);
