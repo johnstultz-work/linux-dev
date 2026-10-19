@@ -3967,6 +3967,8 @@ static void do_activate_blocked_waiter(struct rq *target_rq, struct task_struct 
 	}
 }
 
+#include <linux/delay.h>
+
 static void activate_blocked_waiters(struct rq *target_rq,
 				     struct task_struct *owner,
 				     int wake_flags)
@@ -4035,6 +4037,7 @@ static void activate_blocked_waiters(struct rq *target_rq,
 			__proxy_remove_from_sleeping_owner(owner, p);
 			raw_spin_unlock_irqrestore(&owner->blocked_lock, flags);
 
+			mdelay(2);
 			do_activate_blocked_waiter(target_rq, p, en_flags);
 			trace_sched_pe_activate_blocked_entity(owner, p);
 
