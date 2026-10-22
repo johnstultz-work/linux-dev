@@ -146,7 +146,7 @@ static unsigned long long sum_iowait_online(void)
 	int c;
 
 	for_each_online_cpu(c)
-		sum += nr_iowait_cpu(c);
+		sum += cpu_has_iowait(c);
 	return sum;
 }
 
@@ -187,8 +187,8 @@ static int run_repro(void)
 	init_completion(&owner_done);
 	init_completion(&donor_done);
 
-	base_d = nr_iowait_cpu(donor_cpu);
-	base_o = nr_iowait_cpu(owner_cpu);
+	base_d = cpu_has_iowait(donor_cpu);
+	base_o = cpu_has_iowait(owner_cpu);
 	g_base = sum_iowait_online();
 	pr_info("pe_iowait: START donor_cpu=%d owner_cpu=%d | baseline nr_iowait[d]=%d nr_iowait[o]=%d global=%llu\n",
 		donor_cpu, owner_cpu, base_d, base_o, g_base);
@@ -244,13 +244,13 @@ static int run_repro(void)
 		if (READ_ONCE(donor_task->sleeping_owner) == owner_task)
 			pe_parked = true;
 #endif
-		if (nr_iowait_cpu(donor_cpu) == base_d + 1)
+		if (cpu_has_iowait(donor_cpu) == base_d + 1)
 			break;
 		msleep(1);
 	}
 
-	mid_d = nr_iowait_cpu(donor_cpu);
-	mid_o = nr_iowait_cpu(owner_cpu);
+	mid_d = cpu_has_iowait(donor_cpu);
+	mid_o = cpu_has_iowait(owner_cpu);
 	pr_info("pe_iowait: donor blocked | nr_iowait[d]=%d (%+d) nr_iowait[o]=%d (%+d) parked_on_owner=%d\n",
 		mid_d, mid_d - base_d, mid_o, mid_o - base_o, pe_parked);
 
@@ -268,8 +268,8 @@ static int run_repro(void)
 		pr_warn("pe_iowait: donor thread did not finish in time\n");
 
 	msleep(50);				/* let the dec settle */
-	fin_d = nr_iowait_cpu(donor_cpu);
-	fin_o = nr_iowait_cpu(owner_cpu);
+	fin_d = cpu_has_iowait(donor_cpu);
+	fin_o = cpu_has_iowait(owner_cpu);
 	g_fin = sum_iowait_online();
 	dd = fin_d - base_d;
 	od = fin_o - base_o;
